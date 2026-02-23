@@ -6,9 +6,8 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Lưu theo user_id để mỗi người 1 sổ riêng
 USER_ROWS = {}  # user_id -> list[Row]
 
 @dataclass
@@ -16,9 +15,9 @@ class Row:
     time: str
     date: str
     name: str
-    nap: float  # đơn vị k
-    rut: float  # đơn vị k
-    lai: float  # rut - nap
+    nap: float
+    rut: float
+    lai: float
 
 def today_str():
     return datetime.now().strftime("%Y-%m-%d")
@@ -30,18 +29,11 @@ def get_rows(user_id: int):
     return USER_ROWS.setdefault(user_id, [])
 
 def fmt_k(x: float) -> str:
-    # hiển thị 20k, 20.5k
     if abs(x - round(x)) < 1e-9:
         return f"{int(round(x))}k"
     return f"{x:.2f}k"
 
 def parse_input(text: str):
-    """
-    Hỗ trợ:
-      - "78win nạp 100 rút 120"
-      - "nạp 100 rút 80"
-      - "100 rút 80" (ngầm hiểu nạp=100)
-    """
     t = (text or "").strip()
     if not t:
         return None
@@ -55,13 +47,13 @@ def parse_input(text: str):
     nap = to_num(m_nap.group(1)) if m_nap else None
     rut = to_num(m_rut.group(1)) if m_rut else None
 
-    # case: có đủ nạp+rút
+    # có đủ nạp+rút
     if nap is not None and rut is not None:
         idx = re.search(r"\bnạp\b", t, flags=re.IGNORECASE).start()
         name = t[:idx].strip() or "không tên"
         return name, nap, rut
 
-    # case: "100 rút 80" hoặc "78win 100 rút 120"
+    # "100 rút 80" hoặc "78win 100 rút 120"
     if rut is not None and nap is None:
         m_firstnum = re.search(r"([0-9]+(?:[.,][0-9]+)?)", t)
         if not m_firstnum:
@@ -101,24 +93,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     parsed = parse_input(msg)
     if not parsed:
-        await update.message.reply_text(
-            "Mình chưa hiểu.\nVí dụ: 78win nạp 100 rút 120  hoặc  100 rút 80"
-        )
+        await update.message.reply_text("Mình chưa hiểu. Ví dụ: 78win nạp 100 rút 120 hoặc 100 rút 80")
         return
 
     name, nap, rut = parsed
     lai = rut - nap
     date_str = today_str()
 
-    row = Row(
-        time=now_str(),
-        date=date_str,
-        name=name,
-        nap=nap,
-        rut=rut,
-        lai=lai
-    )
-
+    row = Row(time=now_str(), date=date_str, name=name, nap=nap, rut=rut, lai=lai)
     rows = get_rows(user_id)
     rows.append(row)
 
@@ -162,18 +144,15 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     last = today_rows[-10:]
-    lines = []
     start_idx = len(today_rows) - len(last) + 1
+    lines = []
     for i, r in enumerate(last, start=start_idx):
         sign = "+" if r.lai > 0 else "-" if r.lai < 0 else ""
         val = fmt_k(abs(r.lai)) if r.lai != 0 else "0k"
         lines.append(f"#{i} {r.name}: nạp {fmt_k(r.nap)} rút {fmt_k(r.rut)} => {sign}{val}")
 
     _, total = sum_today(rows, date_str)
-    await update.message.reply_text(
-        "📋 10 dòng gần nhất hôm nay:\n" + "\n".join(lines) +
-        f"\n\nTổng hôm nay: {fmt_k(total)}"
-    )
+    await update.message.reply_text("📋 10 dòng gần nhất hôm nay:\n" + "\n".join(lines) + f"\n\nTổng hôm nay: {fmt_k(total)}")
 
 async def undo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -182,7 +161,6 @@ async def undo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Không có gì để xóa.")
         return
     last = rows.pop()
-
     date_str = today_str()
     count, total = sum_today(rows, date_str)
     await update.message.reply_text(
@@ -199,7 +177,7 @@ async def reset_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not BOT_TOKEN:
-        raise SystemExit("❌ Thiếu BOT_TOKEN. Hãy set biến môi trường BOT_TOKEN trước khi chạy.")
+        raise SystemExit("❌ Thiếu BOT_TOKEN trong Environment Variables của Render.")
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -210,7 +188,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     print("Bot is running...")
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()

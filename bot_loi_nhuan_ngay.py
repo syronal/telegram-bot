@@ -1,42 +1,57 @@
 import os
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import os
 import re
+import threading
 from dataclasses import dataclass
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Render/GitHub Environment Variable:
+# Key: BOT_TOKEN
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
+# ====== LƯU TẠM TRONG RAM THEO USER (tắt service sẽ mất dữ liệu) ======
 USER_ROWS = {}  # user_id -> list[Row]
+
 
 @dataclass
 class Row:
     time: str
     date: str
     name: str
-    nap: float
-    rut: float
-    lai: float
+    nap: float  # đơn vị k
+    rut: float  # đơn vị k
+    lai: float  # rut - nap
 
-def today_str():
+
+def today_str() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
-def now_str():
+
+def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 
 def get_rows(user_id: int):
     return USER_ROWS.setdefault(user_id, [])
 
+
 def fmt_k(x: float) -> str:
+    # hiển thị 20k hoặc 20.50k
     if abs(x - round(x)) < 1e-9:
         return f"{int(round(x))}k"
     return f"{x:.2f}k"
 
+
 def parse_input(text: str):
+    """
+    Hỗ trợ:
+      - "78win nạp 100 rút 120"
+      - "nạp 100 rút 80"
+      - "100 rút 80"  (ngầm hiểu nạp=100)
+    """
     t = (text or "").strip()
     if not t:
         return None
@@ -50,7 +65,7 @@ def parse_input(text: str):
     nap = to_num(m_nap.group(1)) if m_nap else None
     rut = to_num(m_rut.group(1)) if m_rut else None
 
-    # có đủ nạp+rút
+    # Có đủ nạp + rút
     if nap is not None and rut is not None:
         idx = re.search(r"\bnạp\b", t, flags=re.IGNORECASE).start()
         name = t[:idx].strip() or "không tên"
@@ -67,7 +82,8 @@ def parse_input(text: str):
 
     return None
 
-def sum_today(rows, date_str):
+
+def sum_today(rows, date_str: str):
     total = 0.0
     count = 0
     for r in rows:
@@ -76,6 +92,31 @@ def sum_today(rows, date_str):
             count += 1
     return count, total
 
+
+# ====== PORT LISTENER (để Render Web Service "thấy" cổng mở) ======
+def start_port_listener():
+    """
+    Render Web Service cần process listen trên $PORT.
+    Bot polling không mở port -> Render báo "No open ports detected".
+    Ta mở 1 HTTP server siêu nhẹ để Render detect port.
+    """
+    port = int(os.environ.get("PORT", "10000"))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+        def log_message(self, format, *args):
+            return  # tắt log http cho gọn
+
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    server.serve_forever()
+
+
+# ====== TELEGRAM HANDLERS ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "✅ Bot tính lãi theo ngày (bạn nhập số = k)\n\n"
@@ -89,6 +130,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/undo     - xóa dòng vừa nhập\n"
         "/reset_today - xóa dữ liệu hôm nay\n"
     )
+
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -121,6 +163,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📌 Hôm nay: {count} dòng | Tổng: {fmt_k(total)}"
     )
 
+
 async def tongket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     rows = get_rows(user_id)
@@ -135,6 +178,7 @@ async def tongket(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kq = "🙂 Tổng kết hôm nay: Hòa 0k"
 
     await update.message.reply_text(f"{kq}\nSố dòng hôm nay: {count}")
+
 
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -155,7 +199,11 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"#{i} {r.name}: nạp {fmt_k(r.nap)} rút {fmt_k(r.rut)} => {sign}{val}")
 
     _, total = sum_today(rows, date_str)
-    await update.message.reply_text("📋 10 dòng gần nhất hôm nay:\n" + "\n".join(lines) + f"\n\nTổng hôm nay: {fmt_k(total)}")
+    await update.message.reply_text(
+        "📋 10 dòng gần nhất hôm nay:\n" + "\n".join(lines) +
+        f"\n\nTổng hôm nay: {fmt_k(total)}"
+    )
+
 
 async def undo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -163,6 +211,7 @@ async def undo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         await update.message.reply_text("Không có gì để xóa.")
         return
+
     last = rows.pop()
     date_str = today_str()
     count, total = sum_today(rows, date_str)
@@ -171,6 +220,7 @@ async def undo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Hôm nay còn: {count} dòng | Tổng: {fmt_k(total)}"
     )
 
+
 async def reset_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     rows = get_rows(user_id)
@@ -178,9 +228,13 @@ async def reset_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     USER_ROWS[user_id] = [r for r in rows if r.date != date_str]
     await update.message.reply_text("🧹 Đã xóa toàn bộ dữ liệu của hôm nay.")
 
+
 def main():
     if not BOT_TOKEN:
-        raise SystemExit("❌ Thiếu BOT_TOKEN trong Environment Variables của Render.")
+        raise SystemExit("❌ Thiếu BOT_TOKEN. Hãy set Environment Variable BOT_TOKEN trên Render.")
+
+    # Bật PORT listener để Render Web Service detect port
+    threading.Thread(target=start_port_listener, daemon=True).start()
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -193,24 +247,6 @@ def main():
     print("Bot is running...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
+
 if __name__ == "__main__":
-   def start_port_listener():
-    """
-    Render Web Service cần có process listen trên $PORT.
-    Ta mở 1 HTTP server rất nhẹ để Render detect port.
-    """
-    port = int(os.environ.get("PORT", "10000"))
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-type", "text/plain; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(b"OK")
-
-        def log_message(self, format, *args):
-            return  # tắt log http cho gọn
-
-    server = HTTPServer(("0.0.0.0", port), Handler)
-    server.serve_forever() main()
-
+    main()

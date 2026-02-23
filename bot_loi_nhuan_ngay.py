@@ -48,9 +48,9 @@ def fmt_k(x: float) -> str:
 def parse_input(text: str):
     """
     Hỗ trợ:
-      - "78win nạp 100 rút 120"
-      - "nạp 100 rút 80"
-      - "100 rút 80"  (ngầm hiểu nạp=100)
+      - 78 120 100
+      - mb 100 80
+      - 78win nạp 100 rút 120 (vẫn dùng được)
     """
     t = (text or "").strip()
     if not t:
@@ -59,29 +59,31 @@ def parse_input(text: str):
     def to_num(s: str) -> float:
         return float(s.replace(",", ""))
 
+    parts = t.split()
+
+    # ===== CASE 1: dạng ngắn: <ten> <nap> <rut>
+    if len(parts) == 3:
+        try:
+            name = parts[0]
+            nap = to_num(parts[1])
+            rut = to_num(parts[2])
+            return name, nap, rut
+        except:
+            pass
+
+    # ===== CASE 2: dạng cũ: <ten> nạp <nap> rút <rut>
     m_nap = re.search(r"\bnạp\b\s*([0-9]+(?:[.,][0-9]+)?)", t, flags=re.IGNORECASE)
     m_rut = re.search(r"\brút\b\s*([0-9]+(?:[.,][0-9]+)?)", t, flags=re.IGNORECASE)
 
     nap = to_num(m_nap.group(1)) if m_nap else None
     rut = to_num(m_rut.group(1)) if m_rut else None
 
-    # Có đủ nạp + rút
     if nap is not None and rut is not None:
         idx = re.search(r"\bnạp\b", t, flags=re.IGNORECASE).start()
         name = t[:idx].strip() or "không tên"
         return name, nap, rut
 
-    # "100 rút 80" hoặc "78win 100 rút 120"
-    if rut is not None and nap is None:
-        m_firstnum = re.search(r"([0-9]+(?:[.,][0-9]+)?)", t)
-        if not m_firstnum:
-            return None
-        nap = to_num(m_firstnum.group(1))
-        name = t[:m_firstnum.start()].strip() or "không tên"
-        return name, nap, rut
-
     return None
-
 
 def sum_today(rows, date_str: str):
     total = 0.0
@@ -250,3 +252,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

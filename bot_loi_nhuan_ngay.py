@@ -1,4 +1,7 @@
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -191,4 +194,23 @@ def main():
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    main()
+   def start_port_listener():
+    """
+    Render Web Service cần có process listen trên $PORT.
+    Ta mở 1 HTTP server rất nhẹ để Render detect port.
+    """
+    port = int(os.environ.get("PORT", "10000"))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+        def log_message(self, format, *args):
+            return  # tắt log http cho gọn
+
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    server.serve_forever() main()
+
